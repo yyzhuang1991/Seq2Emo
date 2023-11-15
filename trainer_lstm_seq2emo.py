@@ -411,41 +411,41 @@ def main():
     all_preds = []
     gold_list = None
 
-    i = 0
+    for i, (train_index, dev_index) in enumerate(kf.split(y_train_dev)):
+        break 
+
     X_train, X_dev = [X_train_dev[i] for i in train_index], [X_train_dev[i] for i in dev_index]
     y_train, y_dev = [y_train_dev[i] for i in train_index], [y_train_dev[i] for i in dev_index]
 
     gold_list, pred_list = train(X_train, y_train, X_dev, y_dev, X_test, y_test)
     all_preds.append(pred_list)
-    if args.no_cross:
-        break
 
-    all_preds = np.stack(all_preds, axis=0)
+    # all_preds = np.stack(all_preds, axis=0)
 
-    shape = all_preds[0].shape
-    mj = np.zeros(shape)
-    for m in range(shape[0]):
-        for n in range(shape[1]):
-            mj[m, n] = find_majority(np.asarray(all_preds[:, m, n]).reshape((-1)))[0]
+    # shape = all_preds[0].shape
+    # mj = np.zeros(shape)
+    # for m in range(shape[0]):
+    #     for n in range(shape[1]):
+    #         mj[m, n] = find_majority(np.asarray(all_preds[:, m, n]).reshape((-1)))[0]
 
-    final_pred = mj
+    # final_pred = mj
 
-    show_classification_report(gold_list, final_pred)
-    metric = get_metrics(gold_list, final_pred)
-    logger('Normal: h_loss:', metric[0], 'macro F', metric[1], 'micro F', metric[4])
-    metric = get_multi_metrics(gold_list, final_pred)
-    logger('Multi only: h_loss:', metric[0], 'macro F', metric[1], 'micro F', metric[4])
-    metric = get_single_metrics(gold_list, final_pred)
-    logger('Single only: h_loss:', metric[0], 'macro F', metric[1], 'micro F', metric[4])
+    # show_classification_report(gold_list, final_pred)
+    # metric = get_metrics(gold_list, final_pred)
+    # logger('Normal: h_loss:', metric[0], 'macro F', metric[1], 'micro F', metric[4])
+    # metric = get_multi_metrics(gold_list, final_pred)
+    # logger('Multi only: h_loss:', metric[0], 'macro F', metric[1], 'micro F', metric[4])
+    # metric = get_single_metrics(gold_list, final_pred)
+    # logger('Single only: h_loss:', metric[0], 'macro F', metric[1], 'micro F', metric[4])
 
-    logger('Final Jaccard:', jaccard_score(gold_list, final_pred))
+    # logger('Final Jaccard:', jaccard_score(gold_list, final_pred))
 
-    logger(os.path.basename(__file__))
-    logger(args)
+    # logger(os.path.basename(__file__))
+    # logger(args)
 
-    if args.output_path is not None:
-        with open(args.output_path, 'bw') as _f:
-            pkl.dump(final_pred, _f)
+    # if args.output_path is not None:
+    #     with open(args.output_path, 'bw') as _f:
+    #         pkl.dump(final_pred, _f)
 
 
 if __name__ == '__main__':
