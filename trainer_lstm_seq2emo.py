@@ -257,6 +257,9 @@ def eval(model, best_model, loss_criterion, es, dev_loader, dev_set):
             if best_model is None:
                 best_model = deepcopy(model)
 
+    print(f"Save model to model.pth")
+    torch.save(best_model, 'model.pth')
+
     return model, best_model, exit_training
 
 
