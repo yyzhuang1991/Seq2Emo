@@ -1,6 +1,29 @@
-from trainer_lstm_seq2emo import * 
+import os
+import random
+from torch.utils.data import Dataset, DataLoader
+import torch
+import numpy as np
+from models.seq2seq_lstm import LSTMSeq2Seq
+import torch.nn as nn
+import torch.optim as optim
+from tqdm import tqdm
+from utils.early_stopping import EarlyStopping
+import pickle as pkl
+from utils.seq2emo_metric import get_metrics, get_multi_metrics, jaccard_score, get_single_metrics
+from utils.tokenizer import GloveTokenizer
+from copy import deepcopy
+from allennlp.modules.elmo import Elmo, batch_to_ids
+import argparse
+from data.data_loader import load_sem18_data, load_goemotions_data
+from utils.scheduler import get_cosine_schedule_with_warmup
+import utils.nn_utils as nn_utils
+from utils.others import find_majority
+from utils.file_logger import get_file_logger
 from data.data_loader import load_sem18_data, load_goemotions_data, TextProcessor
 
+import sys 
+sys.path.append("/uusoc/exports/scratch/yyzhuang/emotion-reaction/model-scripts/")
+import tuple_utils
 # Argument parser
 parser = argparse.ArgumentParser(description='Options')
 args = parser.parse_args()
@@ -49,8 +72,6 @@ GAMMA = 0.5
 SRC_HIDDEN_DIM = args.en_dim
 TGT_HIDDEN_DIM = args.de_dim
 VOCAB_SIZE = 60000
-ENCODER_LEARNING_RATE = args.en_lr
-DECODER_LEARNING_RATE = args.de_lr
 ATTENTION = args.attention
 PATIENCE = args.patience
 WARMUP_EPOCH = args.warmup_epoch
@@ -80,8 +101,6 @@ elmo.eval()
 GLOVE_EMB_PATH = args.glove_path
 glove_tokenizer = GloveTokenizer(PAD_LEN)
 
-data_path_postfix = '_split'
-data_pkl_path = <todo>
 
 # -------------------------
 go_X_train_dev, go_y_train_dev, go_X_test, go_y_test, EMOS, EMOS_DIC, data_set_name = load_goemotions_data()
@@ -89,20 +108,99 @@ glove_tokenizer.build_tokenizer(go_X_train_dev + go_X_test, vocab_size=VOCAB_SIZ
 glove_tokenizer.build_embedding(GLOVE_EMB_PATH, dataset_name=data_set_name)
 
 
-def load_er_data():
-    load test texts
+lemma_should_get_word = set([
+    "i",
+    "my",
+    "me",
+    "we",
+    "our",
+    "us",
+    "you",
+    "your",
+    "he",
+    "him",
+    "his",
+    "she",
+    "her",
+    "hers",
+    "they",
+    "them",
+    "their"
+    ])
 
-    text_processor = TextProcessor()
-    X_test = [ text_processor.processing_pipeline(x) for x in test_texts]
-    y_test = [0] * len(X_test)
-    EMOS = emo_list
-    EMOS_DIC = {}
-    for idx, emo in enumerate(EMOS):
-        EMOS_DIC[emo] = idx
-    data_set_name = ''
-    return X_test, y_test
+def get_lemmatized_ephrase_with_correct_pronoun(comp_idx, neg_idx, lemmas, words):
+    ret = [] 
+    for compid, nid in zip(comp_idx, neg_idx):
+        if nid is not None: 
+            ret.append('not')
+        for cid in compid:
+            l = lemmas[cid].lower()
+            w = words[cid].lower()
+            if l in lemma_should_get_word:
+                ret.append(w)
+            else:
+                ret.append(l)
+    return " ".join(" ".join(ret).split())
 
-X_test, y_test  = load_er_data()   
+def get_tuples_with_bp(event_dicts, bp_idx, lemmas, words):
+    event_phrases = [] 
+    for edict in event_dicts:
+        word_idx = [ind for comp_ind in edict['event_inds'] for ind in comp_ind]
+        if bp_idx in word_idx:
+            ephrase = get_lemmatized_ephrase_with_correct_pronoun(edict['event_inds'], edict['neg_inds'], lemmas, words)
+            event_phrases.append(ephrase)
+
+    return list(set(event_phrases))
+
+
+def load_er_data(include_prev_sentence = False, kwords = 0, use_events = 0):
+
+    with open("/uusoc/exports/scratch/yyzhuang/emotion-reaction/train_dev_test/test.json.final") as f:
+        data = json.load(f)
+
+
+    prev_sentences = [" ".join(t['prev_sentence']) for t in data]
+    sentences = [t['sentence'] for t in data]
+
+    x_train = []
+    labels = [int(d['label']) - 1 for d in data]
+
+    if include_prev_sentence:
+        x_train = [f"{p} {s}" for p, s in zip(prev_sentences, sentences)]
+
+    elif kwords > 0: 
+
+        sentences = []
+        for t in data: 
+            center = t['word_bound'][0] + 1
+            words = t['sentence'].split() 
+            left = max(0, center - kwords)
+            right = min(len(words), center + kwords + 1)
+            sentences.append(" ".join(words[left:right]))  
+        x_train = sentences
+
+    elif use_events:
+        for i, d in enumerate(data):
+            # d['mod_head'] = {int(mod): d['mod_head'][mod] for mod in d['mod_head']}
+            mod_head = d['enhancedplusplus_mod_head'] if 'enhancedplusplus_mod_head' in d else d['mod_head'] 
+            mod_head = {int(mod): mod_head[mod] for mod in mod_head}
+
+            event_dicts = tuple_utils.get_events_for_sentence(d['sentence'].split(), d['pos'], d['lemma'], mod_head, d['ner'])
+            bp_idx = d['word_bound'][0] + 1 
+            ephrases = get_tuples_with_bp(event_dicts, bp_idx, d['lemma'], d['sentence'].split())
+            x_train.append(ephrases)
+    else:
+        x_train = [s for p, s in zip(prev_sentences, sentences)]
+    
+    return x_train, labels
+
+
+
+test_para, labels  = load_er_data(include_prev_sentence = True)
+test_window, _  = load_er_data(kwords = 6)
+test_events, _ = load_er_data(use_events = True)
+
+
 # ------------------------------------------------------------------
 NUM_EMO = len(EMOS)
 

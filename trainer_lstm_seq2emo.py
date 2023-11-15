@@ -411,15 +411,14 @@ def main():
     all_preds = []
     gold_list = None
 
-    for i, (train_index, dev_index) in enumerate(kf.split(y_train_dev)):
-        logger('STARTING Fold -----------', i + 1)
-        X_train, X_dev = [X_train_dev[i] for i in train_index], [X_train_dev[i] for i in dev_index]
-        y_train, y_dev = [y_train_dev[i] for i in train_index], [y_train_dev[i] for i in dev_index]
+    i = 0
+    X_train, X_dev = [X_train_dev[i] for i in train_index], [X_train_dev[i] for i in dev_index]
+    y_train, y_dev = [y_train_dev[i] for i in train_index], [y_train_dev[i] for i in dev_index]
 
-        gold_list, pred_list = train(X_train, y_train, X_dev, y_dev, X_test, y_test)
-        all_preds.append(pred_list)
-        if args.no_cross:
-            break
+    gold_list, pred_list = train(X_train, y_train, X_dev, y_dev, X_test, y_test)
+    all_preds.append(pred_list)
+    if args.no_cross:
+        break
 
     all_preds = np.stack(all_preds, axis=0)
 
