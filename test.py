@@ -14,7 +14,6 @@ from utils.tokenizer import GloveTokenizer
 from copy import deepcopy
 from allennlp.modules.elmo import Elmo, batch_to_ids
 import argparse
-from data.data_loader import load_sem18_data, load_goemotions_data
 from utils.scheduler import get_cosine_schedule_with_warmup
 import utils.nn_utils as nn_utils
 from utils.others import find_majority
@@ -24,6 +23,29 @@ from data.data_loader import load_sem18_data, load_goemotions_data, TextProcesso
 import sys 
 sys.path.append("/uusoc/exports/scratch/yyzhuang/emotion-reaction/model-scripts/")
 import tuple_utils
+
+from sklearn.metrics import precision_recall_fscore_support
+
+def eval_score(y_true, y_pred, ind2label):
+    # y_true and y_pred should be ints
+    true_labels = set(y_true)
+    for ind in ind2label:
+        assert ind in true_labels # this evaluation only works when the dataset contains all the labels! would go wrong when 
+
+    #individual precision and recall
+    pres, recs, f1s, _ = precision_recall_fscore_support(y_true, y_pred, labels = list(sorted(ind2label.keys())), average = None);
+
+    #total weighted precision recall
+    pre, rec, f1, _ = precision_recall_fscore_support(y_true, y_pred, labels = list(sorted(ind2label.keys())), average = 'macro');
+
+    total_eval = [pre,rec, f1]
+    individual_eval = [pres, recs, f1s]
+
+
+    return individual_eval, total_eval 
+
+
+
 # Argument parser
 parser = argparse.ArgumentParser(description='Options')
 args = parser.parse_args()
@@ -103,6 +125,8 @@ glove_tokenizer = GloveTokenizer(PAD_LEN)
 
 
 # -------------------------
+X_train_dev, y_train_dev, X_test, y_test, EMOS, EMOS_DIC, data_set_name = load_goemotions_data()
+
 go_X_train_dev, go_y_train_dev, go_X_test, go_y_test, EMOS, EMOS_DIC, data_set_name = load_goemotions_data()
 glove_tokenizer.build_tokenizer(go_X_train_dev + go_X_test, vocab_size=VOCAB_SIZE)
 glove_tokenizer.build_embedding(GLOVE_EMB_PATH, dataset_name=data_set_name)
@@ -152,7 +176,7 @@ def get_tuples_with_bp(event_dicts, bp_idx, lemmas, words):
 
     return list(set(event_phrases))
 
-
+import json 
 def load_er_data(include_prev_sentence = False, kwords = 0, use_events = 0):
 
     with open("/uusoc/exports/scratch/yyzhuang/emotion-reaction/train_dev_test/test.json.final") as f:
@@ -197,6 +221,8 @@ def load_er_data(include_prev_sentence = False, kwords = 0, use_events = 0):
 
 
 test_para, labels  = load_er_data(include_prev_sentence = True)
+test_sent, _  = load_er_data()
+
 test_window, _  = load_er_data(kwords = 6)
 test_events, _ = load_er_data(use_events = True)
 
@@ -233,34 +259,89 @@ def elmo_encode(ids):
         elmo_emb = (elmo_emb[0] + elmo_emb[1]) / 2  # avg of two layers
     return elmo_emb
 
-test_set = TestDataReader(X_test, MAX_LEN_DATA)
-test_loader = DataLoader(test_set, batch_size=BATCH_SIZE*3, shuffle=False)
-    
 model = torch.load('model.pth')
 model.cuda()
 model.eval()
 
+sent_set = TestDataReader(test_sent, MAX_LEN_DATA)
+sent_loader = DataLoader(sent_set, batch_size=BATCH_SIZE*3, shuffle=False)
+
+
+para_set = TestDataReader(test_para, MAX_LEN_DATA)
+para_loader = DataLoader(para_set, batch_size=BATCH_SIZE*3, shuffle=False)
+
+window_set = TestDataReader(test_window, MAX_LEN_DATA)
+window_loader = DataLoader(window_set, batch_size=BATCH_SIZE*3, shuffle=False)
+
+
+
 preds = []
 logger("Testing:")
-for i, loader_input in tqdm(enumerate(test_loader), total=int(len(test_set) / BATCH_SIZE)):
+for i, loader_input in tqdm(enumerate(para_loader), total=int(len(para_set) / BATCH_SIZE)):
     with torch.no_grad():
         src, src_len = loader_input
         elmo_src = elmo_encode(src)
         decoder_logit = model(src.cuda(), src_len.cuda(), elmo_src.cuda())
-        preds.append(np.argmax(decoder_logit.data.cpu().numpy(), axis=-1))
+        preds.extend(np.argmax(decoder_logit.data.cpu().numpy(), axis=-1))
         del decoder_logit
+para_labels = [1 if sum(p[:-1])>= 1 else 0  for p in preds]
+print("------- para scores ---------")
+print(eval_score(labels, para_labels, {0: "N", 1: "E"}))
 
-preds = np.concatenate(preds, axis=0)
-gold = np.asarray(y_test)
-binary_gold = gold
-binary_preds = preds
-logger("NOTE, this is on the test set")
-metric = get_metrics(binary_gold, binary_preds)
-logger('Normal: h_loss:', metric[0], 'macro F', metric[1], 'micro F', metric[4])
-metric = get_multi_metrics(binary_gold, binary_preds)
-logger('Multi only: h_loss:', metric[0], 'macro F', metric[1], 'micro F', metric[4])
-# show_classification_report(binary_gold, binary_preds)
-logger('Jaccard:', jaccard_score(gold, preds))
-return binary_gold, binary_preds
 
+preds = []
+logger("Testing:")
+for i, loader_input in tqdm(enumerate(sent_loader), total=int(len(sent_set) / BATCH_SIZE)):
+    with torch.no_grad():
+        src, src_len = loader_input
+        elmo_src = elmo_encode(src)
+        decoder_logit = model(src.cuda(), src_len.cuda(), elmo_src.cuda())
+        preds.extend(np.argmax(decoder_logit.data.cpu().numpy(), axis=-1))
+        del decoder_logit
+sent_labels = [1 if sum(p[:-1])>= 1 else 0  for p in preds]
+print("------- sent scores ---------")
+print(eval_score(labels, sent_labels, {0: "N", 1: "E"}))
+
+
+preds = []
+logger("Testing:")
+for i, loader_input in tqdm(enumerate(window_loader), total=int(len(window_set) / BATCH_SIZE)):
+    with torch.no_grad():
+        src, src_len = loader_input
+        elmo_src = elmo_encode(src)
+        decoder_logit = model(src.cuda(), src_len.cuda(), elmo_src.cuda())
+        preds.extend(np.argmax(decoder_logit.data.cpu().numpy(), axis=-1))
+        del decoder_logit
+window_labels = [1 if sum(p[:-1])>= 1 else 0  for p in preds]
+print("------- window scores ---------")
+print(eval_score(labels, window_labels, {0: "N", 1: "E"}))
+
+
+
+ephrases = sorted(set([e.lower() for es in test_events for e in es]))
+event_set = TestDataReader(ephrases, MAX_LEN_DATA)
+event_loader = DataLoader(event_set, batch_size=BATCH_SIZE*3, shuffle=False)
+
+preds = []
+logger("Testing:")
+for i, loader_input in tqdm(enumerate(event_loader), total=int(len(window_set) / BATCH_SIZE)):
+    with torch.no_grad():
+        src, src_len = loader_input
+        elmo_src = elmo_encode(src)
+        decoder_logit = model(src.cuda(), src_len.cuda(), elmo_src.cuda())
+        preds.extend(np.argmax(decoder_logit.data.cpu().numpy(), axis=-1))
+        del decoder_logit
+e2label = {e: 1 if sum(p[:-1]) >= 1 else 0 for e, p in zip(ephrases, preds) }
+event_labels = []
+for es in test_events:
+    l = 0 
+    for e in es:
+        e = e.lower()
+        if e2label[e] == 1:
+            l = 1 
+            break 
+    event_labels.append(l)
+
+print("------- event scores ---------")
+print(eval_score(labels, event_labels, {0: "N", 1: "E"}))
 

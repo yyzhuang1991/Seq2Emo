@@ -189,7 +189,7 @@ def show_classification_report(gold, pred):
     logger(classification_report(gold, pred, target_names=EMOS, digits=4))
 
 
-def eval(model, best_model, loss_criterion, es, dev_loader, dev_set):
+def eval(model, best_model, loss_criterion, es, dev_loader, dev_set, idx):
     # Evaluate
     exit_training = False
     model.eval()
@@ -258,12 +258,12 @@ def eval(model, best_model, loss_criterion, es, dev_loader, dev_set):
                 best_model = deepcopy(model)
 
     print(f"Save model to model.pth")
-    torch.save(best_model, 'model.pth')
+    torch.save(best_model, f'model{idx}.pth')
 
     return model, best_model, exit_training
 
 
-def train(X_train, y_train, X_dev, y_dev, X_test, y_test):
+def train(X_train, y_train, X_dev, y_dev, X_test, y_test, idx):
         train_set = TrainDataReader(X_train, y_train, MAX_LEN_DATA)
         train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True)
 
@@ -358,7 +358,7 @@ def train(X_train, y_train, X_dev, y_dev, X_test, y_test):
                     scheduler.step()
 
                 if update_step % EVAL_EVERY == 0 and args.eval_every is not None:
-                    model, best_model, exit_training = eval(model, best_model, loss_criterion, es, dev_loader, dev_set)
+                    model, best_model, exit_training = eval(model, best_model, loss_criterion, es, dev_loader, dev_set, idx)
                     if exit_training:
                         break
 
@@ -412,13 +412,13 @@ def main():
     gold_list = None
 
     for i, (train_index, dev_index) in enumerate(kf.split(y_train_dev)):
-        break 
+        if i == 0: continue 
 
-    X_train, X_dev = [X_train_dev[i] for i in train_index], [X_train_dev[i] for i in dev_index]
-    y_train, y_dev = [y_train_dev[i] for i in train_index], [y_train_dev[i] for i in dev_index]
+        X_train, X_dev = [X_train_dev[i] for i in train_index], [X_train_dev[i] for i in dev_index]
+        y_train, y_dev = [y_train_dev[i] for i in train_index], [y_train_dev[i] for i in dev_index]
 
-    gold_list, pred_list = train(X_train, y_train, X_dev, y_dev, X_test, y_test)
-    all_preds.append(pred_list)
+        gold_list, pred_list = train(X_train, y_train, X_dev, y_dev, X_test, y_test, idx = i)
+        all_preds.append(pred_list)
 
     # all_preds = np.stack(all_preds, axis=0)
 
